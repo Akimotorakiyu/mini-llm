@@ -250,11 +250,8 @@ class MiniLLM(nn.Module):
         # Output normalization
         self.norm = nn.RMSNorm(config.dim, eps=config.norm_eps)
         
-        # Output projection (shared with input embedding for efficiency)
+        # Output projection (language model head)
         self.output = nn.Linear(config.dim, config.vocab_size, bias=False)
-        
-        # Share weights between input embedding and output projection
-        self.output.weight = self.tok_embeddings.weight
         
         # Precompute RoPE frequencies (buffer so they move with model.to(device))
         freqs_cos, freqs_sin = precompute_rope_frequencies(
@@ -265,12 +262,18 @@ class MiniLLM(nn.Module):
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
         
-        # Initialize weights
+        # Initialize weights (improved initialization)
         self.apply(self._init_weights)
         
+        # Apply special scaled init to residual projections (GPT-2 style)
+        for name, param in self.named_parameters():
+            if name.endswith("wo.weight") or name.endswith("w2.weight"):
+                torch.nn.init.normal_(param, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layers))
+    
     def _init_weights(self, module):
-        """Initialize weights."""
+        """Initialize weights with improved strategy."""
         if isinstance(module, nn.Linear):
+            # Use standard deviation based on input dimension (Xavier/Glorot-like)
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
@@ -315,10 +318,12 @@ class MiniLLM(nn.Module):
         # Compute loss if targets provided
         loss = None
         if targets is not None:
+            # Reshape for cross entropy
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 targets.view(-1),
-                ignore_index=-100,
+                ignore_index=-100,  # Ignore padding tokens if marked as -100
+                reduction='mean',
             )
         
         return logits, loss

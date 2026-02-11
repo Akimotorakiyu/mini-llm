@@ -51,6 +51,14 @@ def main():
     parser.add_argument("--max_seq_len", type=int, default=512, help="Maximum sequence length")
     parser.add_argument("--learning_rate", type=float, default=3e-4, help="Learning rate")
     
+    # Auto batch configuration
+    parser.add_argument("--auto_batch", action="store_true", 
+                        help="Automatically determine batch_size and gradient_accumulation_steps")
+    parser.add_argument("--target_batch_size", type=int, default=None, 
+                        help="Target effective batch size (used with --auto_batch)")
+    parser.add_argument("--use_trial", action="store_true", 
+                        help="Use trial-and-error to find max batch_size (more accurate but slower)")
+    
     args = parser.parse_args()
     
     config = CONFIGS[args.config]
@@ -73,6 +81,14 @@ def main():
         "--epochs", str(args.epochs),
         "--learning_rate", str(args.learning_rate),
     ]
+    
+    # Add auto batch arguments if specified
+    if args.auto_batch:
+        cmd.append("--auto_batch")
+    if args.target_batch_size is not None:
+        cmd.extend(["--target_batch_size", str(args.target_batch_size)])
+    if args.use_trial:
+        cmd.append("--use_trial")
     
     print(f"\nRunning command:")
     print(" ".join(cmd))

@@ -42,6 +42,75 @@ uv run python train.py \
     --learning_rate 3e-4
 ```
 
+## Auto Batch Size Configuration
+
+训练脚本支持自动计算最优的 `batch_size` 和 `gradient_accumulation_steps`，以最大化显存利用率并提高训练效率。
+
+### 快速估算模式（推荐）
+
+根据可用显存自动计算最佳 batch size：
+
+```bash
+# 自动计算，不指定目标（尽可能使用大的 batch_size）
+uv run python train.py \
+    --dim 768 \
+    --n_layers 12 \
+    --max_seq_len 512 \
+    --auto_batch \
+    --epochs 3
+
+# 指定目标有效 batch size，自动分配最优组合
+uv run python train.py \
+    --dim 768 \
+    --n_layers 12 \
+    --max_seq_len 512 \
+    --auto_batch \
+    --target_batch_size 32 \
+    --epochs 3
+```
+
+### 试错法模式（更准确）
+
+实际运行测试找到最大 batch_size（更精确但启动较慢）：
+
+```bash
+uv run python train.py \
+    --dim 768 \
+    --n_layers 12 \
+    --max_seq_len 512 \
+    --auto_batch \
+    --use_trial \
+    --epochs 3
+```
+
+### 自动配置参数说明
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--auto_batch` | 启用自动 batch size 计算 | False |
+| `--target_batch_size` | 目标有效 batch size（batch_size × gradient_accumulation_steps）| None |
+| `--use_trial` | 使用试错法（实际运行测试，更准确但较慢）| False |
+
+### 工作原理
+
+1. **快速估算模式**：根据模型参数、序列长度和可用显存进行理论计算，快速得出结果
+2. **试错法模式**：逐步增大 batch_size 实际运行测试，直到触发 OOM，返回安全值
+
+### 示例输出
+
+```
+==================================================
+Auto batch configuration enabled
+==================================================
+Estimated max batch_size for available memory: 12
+
+Auto configuration result:
+  batch_size: 12
+  gradient_accumulation_steps: 1
+  effective_batch_size: 12
+==================================================
+```
+
 ## Full Command Options
 
 ```bash

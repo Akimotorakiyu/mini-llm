@@ -30,6 +30,16 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
+    # Set BOS token if available
+    if tokenizer.bos_token_id is None and hasattr(tokenizer, 'eos_token_id'):
+        tokenizer.bos_token_id = tokenizer.eos_token_id
+    
+    print(f"Tokenizer info:")
+    print(f"  Vocab size: {len(tokenizer)}")
+    print(f"  BOS token: {tokenizer.bos_token} (id: {tokenizer.bos_token_id})")
+    print(f"  EOS token: {tokenizer.eos_token} (id: {tokenizer.eos_token_id})")
+    print(f"  PAD token: {tokenizer.pad_token} (id: {tokenizer.pad_token_id})")
+    
     # Load checkpoint
     print(f"Loading checkpoint from {args.checkpoint}...")
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
@@ -54,6 +64,7 @@ def main():
     
     # Generate
     print(f"\nGenerating (temperature={args.temperature}, top_k={args.top_k})...")
+    print("(This may take a while...)")
     with torch.no_grad():
         generated = model.generate(
             prompt_tokens,
@@ -68,6 +79,10 @@ def main():
     print("=" * 50)
     print(output_text)
     print("=" * 50)
+    
+    # Also show token-by-token for debugging
+    if len(generated[0]) < 50:
+        print(f"\nGenerated tokens: {generated[0].tolist()}")
 
 
 if __name__ == "__main__":

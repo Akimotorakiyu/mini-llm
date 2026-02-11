@@ -1,5 +1,5 @@
 """
-Data loading and preprocessing for Daily Dialog dataset.
+Data loading and preprocessing for Baike dataset.
 """
 
 from typing import Iterator, List, Optional
@@ -10,8 +10,8 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
 
 
-class DailyDialogDataset(Dataset):
-    """Daily Dialog dataset for language modeling."""
+class BaikeDataset(Dataset):
+    """Baike dataset for language modeling."""
     
     def __init__(
         self,
@@ -29,10 +29,10 @@ class DailyDialogDataset(Dataset):
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
         # Load dataset
-        print(f"Loading Daily Dialog dataset ({split} split)...")
-        self.dataset = load_dataset("DeepPavlov/daily_dialog", split=split)
+        print(f"Loading Baike dataset ({split} split)...")
+        self.dataset = load_dataset("Dialogue-Model-Research-Group/baike", split=split)
         
-        # Process dialogues into text
+        # Process articles into text
         self.examples = self._process_dataset()
         print(f"Loaded {len(self.examples)} examples")
     
@@ -40,11 +40,32 @@ class DailyDialogDataset(Dataset):
         """Process dataset into text examples."""
         examples = []
         for item in self.dataset:
-            # Each dialogue is a list of utterances
-            dialogue = item["dialog"]
-            # Join utterances with newlines
-            text = "\n".join(dialogue)
-            examples.append(text)
+            # For Baike dataset with context and response fields
+            if "context" in item and "response" in item:
+                # Combine context and response as Q&A pair
+                context = item["context"]
+                response = item["response"]
+                if context and response:
+                    text = f"问：{context}\n答：{response}"
+                    examples.append(text)
+                    continue
+            
+            # Try common field names for text content
+            text = None
+            for key in ["text", "content", "article", "passage", "document", "body"]:
+                if key in item and item[key]:
+                    text = item[key]
+                    break
+            
+            # If no recognized field, use the first string field
+            if text is None:
+                for key, value in item.items():
+                    if isinstance(value, str) and len(value) > 10:
+                        text = value
+                        break
+            
+            if text and isinstance(text, str):
+                examples.append(text)
         return examples
     
     def __len__(self) -> int:
@@ -84,25 +105,72 @@ class ConversationDataset(Dataset):
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
         # Load dataset
-        print(f"Loading Daily Dialog dataset ({split} split)...")
-        dataset = load_dataset("DeepPavlov/daily_dialog", split=split)
+        print(f"Loading Baike dataset ({split} split)...")
         
-        # Tokenize all dialogues
+        # Load dataset - handle case where dataset only has 'train' split
+        try:
+            dataset = load_dataset("Dialogue-Model-Research-Group/baike", split=split)
+        except ValueError:
+            # If requested split doesn't exist, use 'train' split and slice it
+            if split == "validation":
+                print(f"  '{split}' split not found, using last 5% of 'train' split as validation set")
+                dataset = load_dataset("Dialogue-Model-Research-Group/baike", split="train")
+                # Use last 5% for validation
+                total_len = len(dataset)
+                val_start = int(total_len * 0.95)
+                dataset = dataset.select(range(val_start, total_len))
+            elif split == "train":
+                print(f"  Using first 95% of 'train' split as training set")
+                dataset = load_dataset("Dialogue-Model-Research-Group/baike", split="train")
+                total_len = len(dataset)
+                train_end = int(total_len * 0.95)
+                dataset = dataset.select(range(0, train_end))
+            else:
+                raise
+        
+        # Tokenize all articles
         all_tokens = []
         for item in dataset:
-            dialogue = item["dialog"]
-            text = self.tokenizer.eos_token + "\n".join(dialogue) + self.tokenizer.eos_token
-            tokens = self.tokenizer.encode(text, add_special_tokens=False)
-            all_tokens.extend(tokens)
+            # For Baike dataset with context and response fields
+            text_content = None
+            if "context" in item and "response" in item:
+                # Combine context and response as Q&A pair
+                context = item["context"]
+                response = item["response"]
+                if context and response:
+                    text_content = f"问：{context}\n答：{response}"
+            
+            # Try common field names for text content
+            if text_content is None:
+                for key in ["text", "content", "article", "passage", "document", "body"]:
+                    if key in item and item[key]:
+                        text_content = item[key]
+                        break
+            
+            # If no recognized field, use the first string field
+            if text_content is None:
+                for key, value in item.items():
+                    if isinstance(value, str) and len(value) > 10:
+                        text_content = value
+                        break
+            
+            if text_content and isinstance(text_content, str):
+                # Add BOS token at start and EOS token at end
+                text = self.tokenizer.bos_token + text_content + self.tokenizer.eos_token
+                tokens = self.tokenizer.encode(
+                    text, 
+                    add_special_tokens=False,
+                    truncation=True,
+                    max_length=2048  # Truncate very long texts
+                )
+                all_tokens.extend(tokens)
         
         # Pack into sequences of max_length
         self.sequences = []
-        for i in range(0, len(all_tokens), max_length):
+        for i in range(0, len(all_tokens) - max_length, max_length):
+            # Only take complete sequences (no padding)
             seq = all_tokens[i:i + max_length + 1]  # +1 for target
-            if len(seq) > 1:  # Need at least 2 tokens for input and target
-                # Pad if necessary
-                if len(seq) < max_length + 1:
-                    seq = seq + [self.tokenizer.pad_token_id] * (max_length + 1 - len(seq))
+            if len(seq) == max_length + 1:  # Only use complete sequences
                 self.sequences.append(torch.tensor(seq, dtype=torch.long))
         
         print(f"Created {len(self.sequences)} sequences of length {max_length}")
@@ -130,7 +198,7 @@ def create_dataloader(
     batch_size: int = 4,
     num_workers: int = 0,
 ) -> DataLoader:
-    """Create a DataLoader for the Daily Dialog dataset."""
+    """Create a DataLoader for the Baike dataset."""
     dataset = ConversationDataset(
         split=split,
         tokenizer_name=tokenizer_name,
