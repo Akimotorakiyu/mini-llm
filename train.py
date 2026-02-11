@@ -451,6 +451,7 @@ def main():
     parser.add_argument("--eval_interval", type=int, default=1, help="Eval interval (epochs)")
     parser.add_argument("--resume", type=str, default=None, help="Resume from checkpoint")
     parser.add_argument("--num_workers", type=int, default=0, help="DataLoader workers")
+    parser.add_argument("--max_examples", type=int, default=None, help="Limit number of examples for testing (None = use all)")
     
     # Auto batch configuration
     parser.add_argument("--auto_batch", action="store_true", help="Automatically determine batch_size and gradient_accumulation_steps")
@@ -539,6 +540,7 @@ def main():
         max_length=args.max_seq_len,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        max_examples=args.max_examples,
     )
     
     valid_dataloader = create_dataloader(
@@ -547,6 +549,7 @@ def main():
         max_length=args.max_seq_len,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        max_examples=args.max_examples if args.max_examples else None,
     )
     
     # Calculate total steps
