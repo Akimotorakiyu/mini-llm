@@ -3,6 +3,7 @@ Data loading and preprocessing for Baike dataset.
 """
 
 from typing import Iterator, List, Optional
+from pathlib import Path
 
 import torch
 from datasets import load_dataset
@@ -88,7 +89,60 @@ class ConversationDataset(Dataset):
     """
     Dataset that packs multiple conversations into fixed-length sequences.
     More efficient for training than padding individual examples.
+    Includes caching mechanism to avoid reprocessing data.
     """
+    
+    # Cache directory
+    CACHE_DIR = Path(__file__).parent.parent / "cache"
+    
+    @staticmethod
+    def _get_cache_path(
+        split: str,
+        tokenizer_name: str,
+        max_length: int,
+        max_examples: Optional[int] = None,
+    ) -> Path:
+        """Generate cache file path based on parameters."""
+        cache_key = f"{split}_{tokenizer_name.replace('/', '-')}_{max_length}"
+        if max_examples is not None:
+            cache_key += f"_{max_examples}"
+        cache_file = f"dataset_{cache_key}.pt"
+        return ConversationDataset.CACHE_DIR / cache_file
+    
+    @classmethod
+    def clear_cache(cls, split: Optional[str] = None) -> None:
+        """
+        Clear cached datasets.
+        
+        Args:
+            split: If specified, only clear cache for that split. If None, clear all cache.
+        """
+        if not cls.CACHE_DIR.exists():
+            print("Cache directory does not exist")
+            return
+        
+        if split is None:
+            # Clear all cache
+            import shutil
+            shutil.rmtree(cls.CACHE_DIR)
+            print(f"Cleared all cache in {cls.CACHE_DIR}")
+        else:
+            # Clear specific split caches
+            for cache_file in cls.CACHE_DIR.glob(f"dataset_{split}_*.pt"):
+                cache_file.unlink()
+                print(f"Removed cache: {cache_file.name}")
+    
+    @classmethod
+    def get_cache_size(cls) -> dict:
+        """Get the size of cached datasets."""
+        if not cls.CACHE_DIR.exists():
+            return {}
+        
+        cache_info = {}
+        for cache_file in cls.CACHE_DIR.glob("dataset_*.pt"):
+            size_mb = cache_file.stat().st_size / (1024 * 1024)
+            cache_info[cache_file.name] = f"{size_mb:.2f} MB"
+        return cache_info
     
     def __init__(
         self,
@@ -104,6 +158,18 @@ class ConversationDataset(Dataset):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        
+        # Check cache first
+        cache_path = self._get_cache_path(split, tokenizer_name, max_length, max_examples)
+        if cache_path.exists():
+            print(f"Loading cached dataset from {cache_path.name}...", flush=True)
+            cache_data = torch.load(cache_path, weights_only=False)
+            self.sequences = cache_data
+            print(f"Loaded {len(self.sequences)} cached sequences", flush=True)
+            return
+        
+        # Create cache directory if needed
+        self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
         
         # Load dataset
         print(f"Loading Baike dataset ({split} split)...", flush=True)
@@ -192,6 +258,11 @@ class ConversationDataset(Dataset):
                 self.sequences.append(torch.tensor(seq, dtype=torch.long))
         
         print(f"Created {len(self.sequences)} sequences of length {max_length}")
+        
+        # Save cache for future use
+        print(f"Saving cache to {cache_path.name}...", flush=True)
+        torch.save(self.sequences, cache_path)
+        print(f"Cache saved successfully", flush=True)
     
     def __len__(self) -> int:
         return len(self.sequences)
@@ -249,7 +320,8 @@ if __name__ == "__main__":
     vocab_size = get_vocab_size("gpt2")
     print(f"Vocabulary size: {vocab_size}")
     
-    # Create dataloader
+    # Example: Create dataloader (will use cache if available)
+    print("\n--- First run (will process data) ---")
     dataloader = create_dataloader(
         split="train",
         tokenizer_name="gpt2",
@@ -257,7 +329,18 @@ if __name__ == "__main__":
         batch_size=2,
     )
     
+    # Example: Check cache size
+    print("\n--- Cache info ---")
+    cache_info = ConversationDataset.get_cache_size()
+    if cache_info:
+        print("Cached datasets:")
+        for name, size in cache_info.items():
+            print(f"  {name}: {size}")
+    else:
+        print("No cached datasets found")
+    
     # Test iteration
+    print("\n--- Data sample ---")
     for i, (inputs, targets) in enumerate(dataloader):
         print(f"Batch {i}:")
         print(f"  Inputs shape: {inputs.shape}")
@@ -266,3 +349,7 @@ if __name__ == "__main__":
         print(f"  Sample target tokens: {targets[0][:20].tolist()}")
         if i >= 2:
             break
+    
+    # Example: How to clear cache if needed
+    # ConversationDataset.clear_cache(split="train")  # Clear only train cache
+    # ConversationDataset.clear_cache()  # Clear all cache
